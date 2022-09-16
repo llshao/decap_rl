@@ -1,4 +1,5 @@
 import ray
+from ray.cluster_utils import Cluster
 import ray.tune as tune
 from ray.rllib.agents import ppo
 from decap_env import *
@@ -10,7 +11,14 @@ os.environ['RAY_worker_register_timeout_seconds'] = '12000'
 parser = argparse.ArgumentParser()
 parser.add_argument('--checkpoint_dir', '-cpd', type=str)
 args = parser.parse_args()
-ray.init(include_dashboard=True, dashboard_port=9999, num_cpus=41)
+
+# Starts a head-node for the cluster.
+cluster = Cluster(
+    initialize_head=True,
+    head_node_args={
+        "num_cpus": 41,
+    })
+ray.init(include_dashboard=True, dashboard_port=9999, address = cluster.address)
 
 #configures training of the agent with associated hyperparameters
 #See Ray documentation for details on each parameter
@@ -24,9 +32,9 @@ config_train = {
             #"simple_optimizer": True,
             #"disable_env_checking": True,
             "recreate_failed_workers":True,
-            "horizon": 30,#tune.grid_search([30, 50]),
+            "horizon": 15,#tune.grid_search([30, 50]),
             "num_gpus": 0,
-            "model":{"fcnet_hiddens": [64, 64]},
+            "model":{"fcnet_hiddens": [128, 64, 64]},
             "num_workers": 40,
             "env_config":{},#{"generalize":True, "run_valid":False},
             }
@@ -35,11 +43,11 @@ config_train = {
 #If checkpoint fails for any reason, training can be restored 
 if not args.checkpoint_dir:
     trials = tune.run_experiments({
-        "decap_rl_09162022": {
-        "checkpoint_freq":1,
+        "decap_rl_09172022": {
+        "checkpoint_freq":5,
         "run": "PPO",
         "env": DecapPlaceParallel,
-        "stop": {"episode_reward_mean": -0.02, "timesteps_total":60000},
+        "stop": {"episode_reward_mean": -0.02, "timesteps_total":120000},
         "config": config_train},
     })
 else:
@@ -51,6 +59,6 @@ else:
         "env": DecapPlaceParallel,
         #"restore": trials[0]._checkpoint.value},
         "restore": args.checkpoint_dir,
-        "checkpoint_freq":1},
+        "checkpoint_freq":5},
     })
 ray.shutdown()
