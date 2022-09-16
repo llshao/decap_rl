@@ -6,8 +6,6 @@ from gym import spaces
 
 import numpy as np
 import random
-
-from multiprocessing.dummy import Pool as ThreadPool
 import statistics
 import os
 import IPython
@@ -18,15 +16,34 @@ import os
 
 NCOL, NROW, NCAP = 12, 12, 10
 CAP_VAL = 1e-9
-VDI_LOW = 0
-VDI_HIGH = 1e-8
+VDI_LOW = -1000.00
+VDI_HIGH = 1.0
 VDI_TARGET = 0.9e-10
 NODE_LOC = [416, 1250, 2083, 2916, 3750, 4583, 5416, 6250, 7083, 7916, 8750, 9583]
-
+PATH_PREFIX = '/simulation/leilai/Github/decap_rl/'
 
 def run_os():
-    os.system('ngspice -b interposer1_tr.sp -r interposer1_tr.raw')
-    os.system('bin/inttrvmap int1.conf interposer1_tr.raw 1.0 0.05')
+    # first recreate pid+chiplet1_tr_new.subckt
+    filename = 'chiplet1_tr_new.subckt'
+    with open(PATH_PREFIX+filename,'r') as f:
+        chiplet = f.read()
+        chiplet = chiplet.replace(".include 'vdd_decap.1'",".include '"+str(os.getpid())+"_vdd_decap.1'")
+        f.close()
+    with open(PATH_PREFIX+str(os.getpid())+'_'+filename,'w') as f:
+        f.write(chiplet)
+        f.close()
+    # recreate 
+    filename = 'interposer1_tr_new.sp'
+    with open(PATH_PREFIX+filename,'r') as f:
+        chiplet = f.read()
+        chiplet = chiplet.replace(".include 'chiplet1_tr_new.subckt'",".include '"+str(os.getpid())+"_chiplet1_tr_new.subckt'")
+        f.close()
+    with open(PATH_PREFIX+str(os.getpid())+'_'+filename,'w') as f:
+        f.write(chiplet)
+        f.close()
+    # add pid to the linux command
+    os.system('ngspice -b '+str(os.getpid())+'_interposer1_tr_new.sp -r '+str(os.getpid())+'_interposer1_tr.raw')
+    os.system('bin/inttrvmap int1.conf '+str(os.getpid())+'_interposer1_tr.raw 1.0 0.05 '+str(os.getpid()))
 
 def readvdi(file):  # 读取csv中的vdi的数据，得到的是array数据，这里作为input
     zvdi = readresult(file)
@@ -46,8 +63,8 @@ class DecapPlaceParallel(gym.Env):
         self.action_meaning = [0, -1, -NCOL, 1, NCOL] 
         self.action_space = spaces.Tuple([spaces.Discrete(len(self.action_meaning))]*NCAP)
         self.observation_space = spaces.Box(
-            low=np.array([VDI_LOW]*(NCOL*NROW)+NCAP*[0]),
-            high=np.array([VDI_HIGH]*(NCOL*NROW)+NCAP*[NCOL*NROW-1]))
+            low=np.array([VDI_LOW]*(NCOL*NROW+1)+NCAP*[0]),
+            high=np.array([VDI_HIGH]*(NCOL*NROW+1)+NCAP*[NCOL*NROW-1]),dtype=np.float64)
 
         #initialize current param/spec observations
         self.cur_params_idx = np.zeros(NCAP, dtype=np.int32)
@@ -95,7 +112,8 @@ class DecapPlaceParallel(gym.Env):
             print('re:', reward)
             print('-'*10)
 
-        self.ob = np.concatenate([cur_spec_norm, [self.global_g], self.cur_params_idx])
+        #self.ob = np.concatenate([cur_spec_norm, [self.global_g], self.cur_params_idx])
+        self.ob = np.concatenate([cur_spec_norm, [1.0], self.cur_params_idx])
         self.env_steps = self.env_steps + 1
 
         #print('cur ob:' + str(self.cur_specs))
@@ -106,7 +124,7 @@ class DecapPlaceParallel(gym.Env):
     def lookup(self, spec, goal_spec):
 	# normalized by global_vdi/grid_size
         grid_size = len(spec)
-        norm_factor = goal_spec/grid_size
+        norm_factor = float(goal_spec)/grid_size
         norm_spec = [(norm_factor-s)/norm_factor for s in spec]
         return norm_spec
     
@@ -137,11 +155,12 @@ class DecapPlaceParallel(gym.Env):
             str_dc += 'c_decap_%d_%d nd_1_0_%d_%d 0 %e\n' % (i, i, NODE_LOC[int(params_idx[i]//NCOL)],
                                                               NODE_LOC[int(params_idx[i]%NCOL)], CAP_VAL)
         print(str_dc)
-        f = open('vdd_decap.1', 'w')
+        f = open(PATH_PREFIX+str(os.getpid())+'_vdd_decap.1', 'w')
         f.write(str_dc)
         f.close()
         run_os()
-        state_ = readvdi('chiplet1_vdd_1_vdi.csv')
+        # add pid info
+        state_ = readvdi(PATH_PREFIX+str(os.getpid())+'_chiplet1_vdd_1_vdi.csv')
 
         return state_
 
@@ -156,4 +175,5 @@ def main():
   IPython.embed()
 
 if __name__ == "__main__":
+  print(os.getpid())
   main()
